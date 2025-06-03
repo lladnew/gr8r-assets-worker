@@ -1,0 +1,13 @@
+name = "gr8r-worker"
+main = "src/index.js"
+compatibility_date = "2025-06-02"
+
+[[r2_buckets]]
+binding = "ASSETS_BUCKET"
+bucket_name = "assets-gr8r"
+preview_bucket_name = "assets-gr8r"
+
+routes = [
+  { pattern = "assets.gr8r.com/*", zone_name = "gr8r.com" }
+]
+wr
