@@ -10,4 +10,3 @@ preview_bucket_name = "assets-gr8r"
 routes = [
   { pattern = "assets.gr8r.com/*", zone_name = "gr8r.com" }
 ]
-wr
