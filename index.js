@@ -125,7 +125,7 @@ async function updateAirtable({ videoTitle, scheduleDateTime, videoType, r2Url, 
             Title: videoTitle,
             'Schedule Date-Time': scheduleDateTime,
             'Video Type': videoType,
-            'Dropbox Sharelink': r2Url // Replace Dropbox URL
+            'R2 URL': r2Url // New field for R2 URL
           }
         }]
       })
@@ -148,7 +148,7 @@ async function updateAirtable({ videoTitle, scheduleDateTime, videoType, r2Url, 
         fields: {
           'Schedule Date-Time': scheduleDateTime,
           'Video Type': videoType,
-          'Dropbox Sharelink': r2Url // Replace Dropbox URL
+          'R2 URL': r2Url // New field for R2 URL
         }
       })
     });
