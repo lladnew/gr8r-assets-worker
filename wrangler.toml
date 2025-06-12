@@ -13,5 +13,6 @@ bucket_name = "videos-gr8r"
 preview_bucket_name = "videos-gr8r"
 
 routes = [
-  { pattern = "assets.gr8r.com/*", zone_name = "gr8r.com" }
+  { pattern = "assets.gr8r.com/*", zone_name = "gr8r.com" },
+  { pattern = "videos.gr8r.com/*", zone_name = "gr8r.com" }
 ]
