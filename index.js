@@ -4,7 +4,7 @@ export default {
     const { pathname } = url;
 
     // Existing asset-serving logic (using ASSETS_BUCKET)
-    if (pathname !== '/generate-upload-url' && pathname !== '/confirm-upload') {
+    if (pathname !== '/generate-upload-url' && pathname !== '/confirm-upload' && pathname !== '/upload-video') {
       const key = decodeURIComponent(pathname.slice(1)); // Remove leading slash
       if (!key) {
         return new Response("Welcome to the asset server", { status: 200 });
@@ -23,7 +23,7 @@ export default {
       });
     }
 
-    // Endpoint to generate public R2 upload URL (using VIDEOS_BUCKET)
+    // Endpoint to generate upload metadata
     if (pathname === '/generate-upload-url' && request.method === 'POST') {
       try {
         const { videoTitle, scheduleDateTime, videoType } = await request.json();
@@ -31,13 +31,10 @@ export default {
           return new Response('Missing videoTitle, scheduleDateTime, or videoType', { status: 400 });
         }
 
-        // R2 configuration
-        const bucketName = env.R2_BUCKET_NAME; // "videos-gr8r"
-        const accountId = "b703319f1a944be1b7fed06aca5656f8"; // Your account ID
-        const objectKey = `videos/${Date.now()}-${videoTitle.replace(/\s+/g, '-')}.mp4`;
-        const publicUrl = `https://pub-${accountId}.r2.dev/${bucketName}/${objectKey}`;
+        const objectKey = `videos/${Date.now()}-${videoTitle.replace(/\s+/g, '-')}.mov`; // Changed to .mov
+        const publicUrl = `https://assets.gr8r.com/videos/${objectKey}`; // Serve via Worker
 
-        return new Response(JSON.stringify({ uploadUrl: publicUrl, objectKey, publicUrl }), {
+        return new Response(JSON.stringify({ objectKey, publicUrl }), {
           headers: { 'Content-Type': 'application/json' }
         });
       } catch (error) {
@@ -45,7 +42,55 @@ export default {
       }
     }
 
-    // Endpoint to confirm upload and update Airtable
+    // Endpoint to upload video via Worker
+    if (pathname === '/upload-video' && request.method === 'POST') {
+      try {
+        const { videoTitle, scheduleDateTime, videoType } = await request.json();
+        if (!videoTitle || !scheduleDateTime || !videoType) {
+          return new Response('Missing videoTitle, scheduleDateTime, or videoType', { status: 400 });
+        }
+
+        const objectKey = `videos/${Date.now()}-${videoTitle.replace(/\s+/g, '-')}.mov`;
+        const file = request.body;
+        if (!file) {
+          return new Response('No file provided', { status: 400 });
+        }
+
+        await env.VIDEOS_BUCKET.put(objectKey, file, {
+          httpMetadata: { contentType: 'video/quicktime' },
+        });
+
+        // Update Airtable (simplified for upload)
+        const airtableResult = await updateAirtable({
+          videoTitle,
+          scheduleDateTime,
+          videoType,
+          r2Url: `https://assets.gr8r.com/videos/${objectKey}`,
+          airtableBaseId: env.AIRTABLE_BASE_ID,
+          airtableTableId: env.AIRTABLE_TABLE_ID,
+          airtableApiToken: env.AIRTABLE_API_TOKEN
+        });
+
+        if (!airtableResult.success) {
+          return new Response(`Airtable update failed: ${airtableResult.error}`, { status: 500 });
+        }
+
+        return new Response(JSON.stringify({
+          status: 'success',
+          message: `Uploaded ${videoTitle} via Worker`,
+          videoTitle,
+          scheduleDateTime,
+          videoType,
+          r2Url: `https://assets.gr8r.com/videos/${objectKey}`
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (error) {
+        return new Response(`Error: ${error.message}`, { status: 500 });
+      }
+    }
+
+    // Endpoint to confirm upload (for public URL flow, now optional)
     if (pathname === '/confirm-upload' && request.method === 'POST') {
       try {
         const { objectKey, videoTitle, scheduleDateTime, videoType } = await request.json();
@@ -53,16 +98,7 @@ export default {
           return new Response('Missing required fields', { status: 400 });
         }
 
-        // Verify object exists in R2
-        const bucketName = env.R2_BUCKET_NAME;
-        const accountId = "b703319f1a944be1b7fed06aca5656f8";
-        const publicUrl = `https://pub-${accountId}.r2.dev/${bucketName}/${objectKey}`;
-        const r2Response = await fetch(publicUrl, { method: 'HEAD' });
-        if (!r2Response.ok) {
-          return new Response('Upload not found in R2', { status: 404 });
-        }
-
-        // Update Airtable
+        const publicUrl = `https://assets.gr8r.com/videos/${objectKey}`;
         const airtableResult = await updateAirtable({
           videoTitle,
           scheduleDateTime,
@@ -79,7 +115,7 @@ export default {
 
         return new Response(JSON.stringify({
           status: 'success',
-          message: `Uploaded ${videoTitle}, Airtable updated`,
+          message: `Confirmed ${videoTitle}, Airtable updated`,
           videoTitle,
           scheduleDateTime,
           videoType,
@@ -98,7 +134,6 @@ export default {
 
 // Update Airtable with video metadata
 async function updateAirtable({ videoTitle, scheduleDateTime, videoType, r2Url, airtableBaseId, airtableTableId, airtableApiToken }) {
-  // Find record by Title
   const response = await fetch(
     `https://api.airtable.com/v0/${airtableBaseId}/${airtableTableId}?filterByFormula=${encodeURIComponent(`{Title} = "${videoTitle}"`)}`,
     {
@@ -112,7 +147,6 @@ async function updateAirtable({ videoTitle, scheduleDateTime, videoType, r2Url, 
 
   let recordId;
   if (records.length === 0) {
-    // Create new record
     const createResponse = await fetch(`https://api.airtable.com/v0/${airtableBaseId}/${airtableTableId}`, {
       method: 'POST',
       headers: {
@@ -125,7 +159,7 @@ async function updateAirtable({ videoTitle, scheduleDateTime, videoType, r2Url, 
             Title: videoTitle,
             'Schedule Date-Time': scheduleDateTime,
             'Video Type': videoType,
-            'R2 URL': r2Url // New field for R2 URL
+            'R2 URL': r2Url
           }
         }]
       })
@@ -136,7 +170,6 @@ async function updateAirtable({ videoTitle, scheduleDateTime, videoType, r2Url, 
     }
     recordId = createResult.records[0].id;
   } else {
-    // Update existing record
     recordId = records[0].id;
     await fetch(`https://api.airtable.com/v0/${airtableBaseId}/${airtableTableId}/${recordId}`, {
       method: 'PATCH',
@@ -148,7 +181,7 @@ async function updateAirtable({ videoTitle, scheduleDateTime, videoType, r2Url, 
         fields: {
           'Schedule Date-Time': scheduleDateTime,
           'Video Type': videoType,
-          'R2 URL': r2Url // New field for R2 URL
+          'R2 URL': r2Url
         }
       })
     });
