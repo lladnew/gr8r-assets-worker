@@ -25,5 +25,18 @@
       "pattern": "videos.gr8r.com/*",
       "zone_name": "gr8r.com"
     }
+  ],
+
+  "services": [
+    {
+      "binding": "AIRTABLE_PROXY",
+      "service": "gr8r-airtable-worker",
+      "environment": "production"
+    },
+    {
+      "binding": "GRAFANA",
+      "service": "gr8r-grafana-worker",
+      "environment": "production"
+    }
   ]
 }
