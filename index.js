@@ -1,15 +1,12 @@
-// v1.0.5 assets worker:
-// - REPLACED direct Airtable logic with internal service binding (env.AIRTABLE_PROXY)
-// - REPLACED Grafana logging with internal service binding (env.GRAFANA)
-// - FIXED: replaced relative URLs in `new Request()` with absolute internal URLs (required for service binding compatibility)
-// - PRESERVED: R2 video upload to VIDEOS_BUCKET
-// - PRESERVED: asset serving from ASSETS_BUCKET
-// - SUPPORTS: dynamic Airtable fields and structured Grafana log metadata
+// v1.0.6 assets worker:
+// - FIXED: routing logic now uses VIDEOS_BUCKET for requests to videos.gr8r.com
+// - ENHANCED: Grafana logs now include verbose metadata only for failed requests
+// - NO changes to success response structure or behavior
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const { pathname } = url;
+    const { pathname, hostname } = url;
 
     // Proxy video upload to R2
     if (pathname === '/upload-video' && request.method === 'POST') {
@@ -37,7 +34,6 @@ export default {
 
         const publicUrl = `https://videos.gr8r.com/${objectKey}`;
 
-        // Send to Airtable Worker via internal service binding
         const airtableRequest = new Request('https://internal/api/airtable/update', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -55,13 +51,14 @@ export default {
         const airtableResponse = await env.AIRTABLE_PROXY.fetch(airtableRequest);
         const airtableResult = await airtableResponse.json();
 
-        // Log to Grafana using internal service binding
-        const grafanaRequest = new Request('https://internal/api/grafana', {
+        const success = airtableResponse.ok;
+
+        await env.GRAFANA.fetch(new Request('https://internal/api/grafana', {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            level: airtableResponse.ok ? "info" : "error",
-            message: airtableResponse.ok
+            level: success ? "info" : "error",
+            message: success
               ? "R2 upload + Airtable update success"
               : `Airtable Worker failed: ${airtableResult?.error || "unknown error"}`,
             meta: {
@@ -71,14 +68,13 @@ export default {
               r2Url: publicUrl,
               videoType,
               scheduleDateTime,
-              airtableProxyStatus: airtableResponse.status
+              airtableProxyStatus: airtableResponse.status,
+              ...(success ? {} : { airtableResponse: airtableResult })
             }
           })
-        });
+        }));
 
-        await env.GRAFANA.fetch(grafanaRequest);
-
-        if (!airtableResponse.ok) {
+        if (!success) {
           return new Response(`Airtable Worker failed: ${airtableResult?.error || "unknown error"}`, {
             status: 500
           });
@@ -94,15 +90,33 @@ export default {
         }), {
           headers: { 'Content-Type': 'application/json' }
         });
+
       } catch (error) {
+        // Log error to Grafana with stack trace
+        await env.GRAFANA.fetch(new Request('https://internal/api/grafana', {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            level: "error",
+            message: "Unhandled upload error",
+            meta: {
+              source: "assets-worker",
+              service: "upload-video",
+              error: error.message,
+              stack: error.stack
+            }
+          })
+        }));
+
         return new Response(`Error: ${error.message}`, { status: 500 });
       }
     }
 
-    // Serve public assets from ASSETS_BUCKET
+    // Serve public assets from correct bucket
     if (request.method === 'GET') {
       const key = decodeURIComponent(url.pathname.slice(1));
-      const object = await env.ASSETS_BUCKET.get(key);
+      const bucket = hostname === "videos.gr8r.com" ? env.VIDEOS_BUCKET : env.ASSETS_BUCKET;
+      const object = await bucket.get(key);
 
       if (!object) {
         return new Response("Not found", { status: 404 });
