@@ -1,10 +1,10 @@
-// v1.0.4 assets worker:
-// - REPLACED direct Airtable logic with call to internal Worker (env.AIRTABLE_PROXY)
-// - REPLACED Grafana fetch with internal service binding (env.GRAFANA)
-// - PRESERVED video upload via VIDEOS_BUCKET
-// - PRESERVED static asset serving via ASSETS_BUCKET
-// - SUPPORTS dynamic fields for Airtable
-// - SUPPORTS Grafana metadata-level structured logging
+// v1.0.5 assets worker:
+// - REPLACED direct Airtable logic with internal service binding (env.AIRTABLE_PROXY)
+// - REPLACED Grafana logging with internal service binding (env.GRAFANA)
+// - FIXED: replaced relative URLs in `new Request()` with absolute internal URLs (required for service binding compatibility)
+// - PRESERVED: R2 video upload to VIDEOS_BUCKET
+// - PRESERVED: asset serving from ASSETS_BUCKET
+// - SUPPORTS: dynamic Airtable fields and structured Grafana log metadata
 
 export default {
   async fetch(request, env, ctx) {
@@ -37,8 +37,8 @@ export default {
 
         const publicUrl = `https://videos.gr8r.com/${objectKey}`;
 
-        // Call Airtable proxy via service binding
-        const airtableRequest = new Request('/api/airtable/update', {
+        // Send to Airtable Worker via internal service binding
+        const airtableRequest = new Request('https://internal/api/airtable/update', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -55,8 +55,8 @@ export default {
         const airtableResponse = await env.AIRTABLE_PROXY.fetch(airtableRequest);
         const airtableResult = await airtableResponse.json();
 
-        // Call Grafana logger via service binding
-        const grafanaRequest = new Request('/api/grafana', {
+        // Log to Grafana using internal service binding
+        const grafanaRequest = new Request('https://internal/api/grafana', {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -99,7 +99,7 @@ export default {
       }
     }
 
-    // Serve static assets from ASSETS_BUCKET
+    // Serve public assets from ASSETS_BUCKET
     if (request.method === 'GET') {
       const key = decodeURIComponent(url.pathname.slice(1));
       const object = await env.ASSETS_BUCKET.get(key);
