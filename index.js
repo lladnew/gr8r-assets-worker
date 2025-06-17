@@ -1,10 +1,17 @@
-// v1.0.2 added code back for asset worker serving that was lost... eye roll
+// v1.0.4 assets worker:
+// - REPLACED direct Airtable logic with call to internal Worker (env.AIRTABLE_PROXY)
+// - REPLACED Grafana fetch with internal service binding (env.GRAFANA)
+// - PRESERVED video upload via VIDEOS_BUCKET
+// - PRESERVED static asset serving via ASSETS_BUCKET
+// - SUPPORTS dynamic fields for Airtable
+// - SUPPORTS Grafana metadata-level structured logging
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const { pathname, searchParams } = url;
+    const { pathname } = url;
 
-    // Proxy video upload to R2 via Worker
+    // Proxy video upload to R2
     if (pathname === '/upload-video' && request.method === 'POST') {
       try {
         const contentType = request.headers.get("content-type") || "";
@@ -30,19 +37,51 @@ export default {
 
         const publicUrl = `https://videos.gr8r.com/${objectKey}`;
 
-        // Update Airtable
-        const airtableResult = await updateAirtable({
-          videoTitle: title,
-          scheduleDateTime,
-          videoType,
-          r2Url: publicUrl,
-          airtableBaseId: env.AIRTABLE_BASE_ID,
-          airtableTableId: env.AIRTABLE_TABLE_ID,
-          airtableApiToken: env.AIRTABLE_API_TOKEN
+        // Call Airtable proxy via service binding
+        const airtableRequest = new Request('/api/airtable/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            table: "Video posts",
+            title,
+            fields: {
+              "Schedule Date-Time": scheduleDateTime,
+              "Video Type": videoType,
+              "R2 URL": publicUrl
+            }
+          })
         });
 
-        if (!airtableResult.success) {
-          return new Response(`Airtable update failed: ${airtableResult.error}`, { status: 500 });
+        const airtableResponse = await env.AIRTABLE_PROXY.fetch(airtableRequest);
+        const airtableResult = await airtableResponse.json();
+
+        // Call Grafana logger via service binding
+        const grafanaRequest = new Request('/api/grafana', {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            level: airtableResponse.ok ? "info" : "error",
+            message: airtableResponse.ok
+              ? "R2 upload + Airtable update success"
+              : `Airtable Worker failed: ${airtableResult?.error || "unknown error"}`,
+            meta: {
+              source: "assets-worker",
+              service: "upload-video",
+              videoTitle: title,
+              r2Url: publicUrl,
+              videoType,
+              scheduleDateTime,
+              airtableProxyStatus: airtableResponse.status
+            }
+          })
+        });
+
+        await env.GRAFANA.fetch(grafanaRequest);
+
+        if (!airtableResponse.ok) {
+          return new Response(`Airtable Worker failed: ${airtableResult?.error || "unknown error"}`, {
+            status: 500
+          });
         }
 
         return new Response(JSON.stringify({
@@ -59,81 +98,24 @@ export default {
         return new Response(`Error: ${error.message}`, { status: 500 });
       }
     }
-// Serve public assets from ASSETS_BUCKET
-if (request.method === 'GET') {
-  const key = decodeURIComponent(new URL(request.url).pathname.slice(1));
-  const object = await env.ASSETS_BUCKET.get(key);
 
-  if (object === null) {
-    return new Response("Not found", { status: 404 });
-  }
+    // Serve static assets from ASSETS_BUCKET
+    if (request.method === 'GET') {
+      const key = decodeURIComponent(url.pathname.slice(1));
+      const object = await env.ASSETS_BUCKET.get(key);
 
-  return new Response(object.body, {
-    headers: {
-      'Content-Type': object.httpMetadata?.contentType || 'application/octet-stream',
-      'Cache-Control': 'public, max-age=3600'
-    }
-  });
-}
-
-    return new Response("Not found", { status: 404 });
-  },
-};
-
-// Airtable update function
-async function updateAirtable({ videoTitle, scheduleDateTime, videoType, r2Url, airtableBaseId, airtableTableId, airtableApiToken }) {
-  const response = await fetch(
-    `https://api.airtable.com/v0/${airtableBaseId}/${airtableTableId}?filterByFormula=${encodeURIComponent(`{Title} = "${videoTitle}"`)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${airtableApiToken}`,
-        'Content-Type': 'application/json'
+      if (!object) {
+        return new Response("Not found", { status: 404 });
       }
-    }
-  );
-  const { records } = await response.json();
 
-  let recordId;
-  if (records.length === 0) {
-    const createResponse = await fetch(`https://api.airtable.com/v0/${airtableBaseId}/${airtableTableId}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${airtableApiToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        records: [{
-          fields: {
-            Title: videoTitle,
-            'Schedule Date-Time': scheduleDateTime,
-            'Video Type': videoType,
-            'R2 URL': r2Url
-          }
-        }]
-      })
-    });
-    const createResult = await createResponse.json();
-    if (!createResponse.ok) {
-      return { success: false, error: createResult.error?.message || 'Failed to create record' };
-    }
-    recordId = createResult.records[0].id;
-  } else {
-    recordId = records[0].id;
-    await fetch(`https://api.airtable.com/v0/${airtableBaseId}/${airtableTableId}/${recordId}`, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${airtableApiToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        fields: {
-          'Schedule Date-Time': scheduleDateTime,
-          'Video Type': videoType,
-          'R2 URL': r2Url
+      return new Response(object.body, {
+        headers: {
+          'Content-Type': object.httpMetadata?.contentType || 'application/octet-stream',
+          'Cache-Control': 'public, max-age=3600'
         }
-      })
-    });
-  }
+      });
+    }
 
-  return { success: true, recordId };
-}
+    return new Response("Not found", { status: 404 });
+  }
+};
