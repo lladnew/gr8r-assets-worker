@@ -117,7 +117,7 @@ export default {
         const revaiPayload = {
           media_url: publicUrl,
           metadata: title,
-          callback_url: "https://hooks.zapier.com/hooks/catch/18389329/2Ik9o5u/"
+          callback_url: "https://hooks.zapier.com/hooks/catch/18389329/2lk9o5u/"
         };
 
         const revaiRequest = new Request('https://internal/api/revai/transcribe', {
