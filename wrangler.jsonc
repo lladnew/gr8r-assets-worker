@@ -37,6 +37,11 @@
       "binding": "GRAFANA",
       "service": "gr8r-grafana-worker",
       "environment": "production"
+    },
+    {
+      "binding": "REVAI", // 👈 NEW
+      "service": "gr8r-revai-worker",
+      "environment": "production"
     }
   ]
 }
