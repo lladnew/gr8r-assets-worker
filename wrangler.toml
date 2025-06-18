@@ -1,0 +1,33 @@
+name = \"gr8r-assets-worker\"
+main = \"index.js\"
+compatibility_date = \"2025-06-02\"
+
+[[r2_buckets]]
+binding = \"ASSETS_BUCKET\"
+bucket_name = \"assets-gr8r\"
+preview_bucket_name = \"assets-gr8r\"
+
+[[r2_buckets]]
+binding = \"VIDEOS_BUCKET\"
+bucket_name = \"videos-gr8r\"
+preview_bucket_name = \"videos-gr8r\"
+
+[[routes]]
+pattern = \"assets.gr8r.com/*\"
+zone_name = \"gr8r.com\"
+
+[[routes]]
+pattern = \"videos.gr8r.com/*\"
+zone_name = \"gr8r.com\"
+
+[[services]]
+binding = \"AIRTABLE_PROXY\"
+service = \"gr8r-airtable-worker\"
+
+[[services]]
+binding = \"GRAFANA\"
+service = \"gr8r-grafana-worker\"
+
+[[services]]
+binding = \"REVAI\"
+service = \"gr8r-revai-worker\"
